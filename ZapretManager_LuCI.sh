@@ -137,7 +137,7 @@ fi
 
 CONF="/etc/config/zapret"
 ZM_VERSION="@ZM_VERSION@"
-ZM_SCRIPT_URL="https://raw.githubusercontent.com/StressOzz/Zapret-Manager/refs/heads/main/ZapretManager_LuCI.sh"
+ZM_SCRIPT_URL="https://raw.githubusercontent.com/ssystem32/Zapret-Manager/refs/heads/main/ZapretManager_LuCI.sh"
 GH_RAW="https://raw.githubusercontent.com"
 GH_MAIN="https://github.com"
 MT_URL_ITDOG="${GH_RAW}/StressOzz/Zapret-Manager/refs/heads/main/files/MagiTrickle/configAD.yaml"
@@ -16708,6 +16708,17 @@ forkop_action() {
 			if _fk_enabled && _fk_up; then job_start forkop do_fk_service restart
 			else printf '{"ok":true,"saved":true}\n'; fi
 			;;
+		secmove)
+			_fk_installed || { echo '{"error":"Forkozz не установлен"}'; return 1; }
+			_job_running forkop && { echo '{"error":"дождитесь окончания текущей операции"}'; return 1; }
+			case "$arg" in
+				*'|'*) b="$(_fk_ucj secmove "${arg%%|*}" "${arg#*|}")" || { printf '%s\n' "$b"; return 1; } ;;
+				*) echo '{"error":"неверные аргументы перемещения секции"}'; return 1 ;;
+			esac
+			case "$b" in *'"ok": true'*|*'"ok":true'*) ;; *) printf '%s\n' "$b"; return 1 ;; esac
+			if _fk_enabled && _fk_up; then job_start forkop do_fk_service restart
+			else printf '{"ok":true,"saved":true}\n'; fi
+			;;
 		dns_test)      fk_dns_test "$arg" ;;
 		hide)
 			_fk_installed || { echo '{"error":"Forkozz не установлен"}'; return 1; }
@@ -19686,6 +19697,24 @@ function cmd_secdel(sec) {
 	out({ ok: true });
 }
 
+function cmd_secmove(sec, dir) {
+	let c = cursor(), names = [];
+	for (let x in sections(c, "section"))
+		if (is_conn(x)) push(names, x[".name"]);
+	if (length(names) < 2) fail("секций меньше двух — перемещать нечего");
+	let i = index(names, sec);
+	if (i < 0) fail("такой секции нет");
+	if (dir != "left" && dir != "right") fail("направление: left или right");
+	let j = dir == "left" ? i - 1 : i + 1;
+	if (j < 0 || j >= length(names)) fail(dir == "left" ? "секция уже первая" : "секция уже последняя");
+	let tidx = int((c.get_all(CFG, names[j]) || {})[".index"]);
+	c.reorder(CFG, sec, tidx);
+	if (c.get(CFG, BYPASS) != null) c.reorder(CFG, BYPASS, 1);
+	c.save(CFG);
+	c.commit(CFG);
+	out({ ok: true });
+}
+
 function cmd_secnames() {
 	let p = pick(cursor());
 	print(join("\n", [ p.sec, ...p.conns ]), "\n");
@@ -20206,7 +20235,7 @@ function cmd_conns() {
 let mode = ARGV[0] || "";
 let sec = ARGV[1] || "";
 if (mode != "import" && mode != "route" && sec != "" && (ml(sec) || !match(sec, /^[A-Za-z0-9_]+$/))) fail("неверное имя секции");
-if (sec == "" && index([ "get", "set", "secdel", "import", "route", "diag", "secnames", "secstate", "stats", "conns", "fallback_config", "guard" ], mode) < 0) sec = pick(cursor()).sec;
+if (sec == "" && index([ "get", "set", "secdel", "secmove", "import", "route", "diag", "secnames", "secstate", "stats", "conns", "fallback_config", "guard" ], mode) < 0) sec = pick(cursor()).sec;
 
 if (mode == "device_setup") cmd_device_setup();
 else if (mode == "fallback_config") cmd_fallback_config();
@@ -20214,6 +20243,7 @@ else if (mode == "fallwatch") cmd_fallwatch(sec);
 else if (mode == "get") cmd_get(sec);
 else if (mode == "set") cmd_set();
 else if (mode == "secdel") cmd_secdel(sec);
+else if (mode == "secmove") cmd_secmove(sec, ARGV[2] || "");
 else if (mode == "secnames") cmd_secnames();
 else if (mode == "servers") cmd_servers(sec);
 else if (mode == "latency") cmd_latency(sec);
@@ -29395,6 +29425,15 @@ html.zm-theme-dark .zm-node:not(.zm-active) { background: #22272e; border-color:
 .zm-node-name { font-weight: 600; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 .zm-node.zm-active .zm-node-name::before { content: none; }
 .zm-node.zm-sec .zm-node-name::before { content: none; }
+.zm-sec-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.zm-sec-moves { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.zm-sec-move {
+	appearance: none; -webkit-appearance: none; border: 1px solid rgba(0,0,0,.12); background: rgba(127,127,127,.08);
+	border-radius: 6px; width: 26px; height: 26px; padding: 0; cursor: pointer; font-size: 14px; line-height: 1; color: inherit;
+}
+.zm-sec-move:hover:not(:disabled) { border-color: #1a7f37; background: rgba(26,127,55,.1); }
+.zm-sec-move:disabled { opacity: .35; cursor: default; }
+html.zm-theme-dark .zm-sec-move { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.06); }
 .zm-tabsplit { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 40px; margin: 4px 0 0; }
 .zm-tabsplit > .zm-tabgrp { margin: 0; }
 .zm-tabsplit.zm-tabs-one > .zm-tabgrp { flex: 1 1 100%; width: 100%; max-width: 100%; display: flex; }
@@ -31512,6 +31551,31 @@ return view.extend({
 			}).catch(function() { zm.toast('Роутер не ответил', 'error'); }); });
 		}
 
+		function moveSec(name, dir) {
+			if (busy || saving || secBusy) { zm.toast('Дождитесь окончания текущей операции', 'warning'); return; }
+			var secDirty = draft.sec === 'new' ? false : secSig(draft) !== secSig(withBootMode(fromCfg(cfg)));
+			var stay = draft.sec === 'new' ? (cfg && cfg.main) || name : draft.sec;
+			var go = function() {
+				secBusy = true;
+				renderSections();
+				zm.forkopAction('secmove', name + '|' + dir).then(function(res) {
+					secBusy = false;
+					if (res.error) { zm.toast(res.error, 'error'); renderSections(); return; }
+					if (res.started) {
+						lastAct = 'restart';
+						zm.toast('Порядок секций изменён — перезапускаем Forkozz', 'warning');
+						switchSec(stay, true);
+						follow();
+					} else {
+						zm.toast('Порядок секций изменён', 'info');
+						switchSec(stay, true);
+					}
+				}).catch(function() { secBusy = false; renderSections(); zm.toast('Роутер не ответил', 'error'); });
+			};
+			if (secDirty) return zm.ask('В секции «' + secName() + '» есть несохранённые изменения.\n\nОтменить их и изменить порядок секций?').then(function(ok) { if (ok) go(); });
+			go();
+		}
+
 		function renderSections() {
 			secCard.innerHTML = '';
 			var list = secs(), show = !!st.installed && configured(), common = !isSecTab(tab);
@@ -31524,20 +31588,39 @@ return view.extend({
 			secCard.appendChild(E('p', { 'class': 'zm-hint', 'style': 'margin-top:-6px' }, common
 				? 'Исключения, список «Мимо Forkozz» и настройки действуют для всех секций сразу. Нажмите на секцию, чтобы настроить её подключение, сервисы и устройства.'
 				: 'Каждая секция ведёт свои сервисы через своё подключение. На вкладке «Устройства» можно пустить через секцию весь трафик выбранных устройств или ограничить её правила отдельными устройствами.'));
-			var tiles = list.map(function(s) {
+			var tiles = list.map(function(s, idx) {
 				var on = s.name === draft.sec, n = secSel(cfg, s), extra = (s.domains || 0) + (s.subnets || 0), f = (s.full || []).length;
 				var what = n ? nn(n, 'список', 'списка', 'списков') : extra ? nn(extra, 'адрес', 'адреса', 'адресов') : 'пусто';
 				if (f) what = (n || extra ? what + ' · ' : '') + nn(f, 'устройство', 'устройства', 'устройств');
 				var fa = (s.all || []).length;
 				if (fa) what = (n || extra || f ? what + ' · ' : '') + 'весь трафик: ' + fa;
-				return node(s.label, secConn(s), on, function() { open(s.name); },
-					E('span', { 'class': 'zm-lat ' + (!s.enabled ? 'zm-lat-bad' : n || extra || f || fa ? 'zm-lat-good' : 'zm-lat-none'), 'style': 'flex:0 1 auto; white-space:normal; min-width:0; text-align:right; overflow-wrap:anywhere' }, s.enabled ? what : 'выключена'),
-					'zm-sec' + (s.enabled ? '' : ' zm-node-dead'));
+				var moveBtns = null;
+				if (list.length > 1) {
+					var blocked = !!(secBusy || busy || saving);
+					moveBtns = E('div', { 'class': 'zm-sec-moves', 'click': function(ev) { ev.stopPropagation(); } }, [
+						E('button', { 'type': 'button', 'class': 'zm-sec-move', 'title': 'Сдвинуть влево (выше приоритет)',
+							'disabled': blocked || idx === 0 ? '' : null,
+							'click': function(ev) { ev.preventDefault(); ev.stopPropagation(); moveSec(s.name, 'left'); } }, '←'),
+						E('button', { 'type': 'button', 'class': 'zm-sec-move', 'title': 'Сдвинуть вправо (ниже приоритет)',
+							'disabled': blocked || idx === list.length - 1 ? '' : null,
+							'click': function(ev) { ev.preventDefault(); ev.stopPropagation(); moveSec(s.name, 'right'); } }, '→')
+					]);
+				}
+				return E('div', { 'class': 'zm-node zm-sec' + (on ? ' zm-active' : '') + (s.enabled ? '' : ' zm-node-dead'), 'click': function() { open(s.name); } }, [
+					E('div', { 'class': 'zm-sec-top' }, [
+						E('div', { 'class': 'zm-node-name' }, [ String(s.label) ]),
+						moveBtns || E([])
+					]),
+					E('div', { 'class': 'zm-node-foot' }, [
+						E('span', {}, [ String(secConn(s) || '') ]),
+						E('span', { 'class': 'zm-lat ' + (!s.enabled ? 'zm-lat-bad' : n || extra || f || fa ? 'zm-lat-good' : 'zm-lat-none'), 'style': 'flex:0 1 auto; white-space:normal; min-width:0; text-align:right; overflow-wrap:anywhere' }, s.enabled ? what : 'выключена')
+					])
+				]);
 			});
 			if (isNew) tiles.push(node(secName(), 'ещё не сохранена', true, function() {}, E('span', { 'class': 'zm-lat zm-lat-mid' }, 'черновик'), 'zm-sec'));
 			else if (list.length < SEC_MAX) tiles.push(E('div', { 'class': 'zm-node zm-sec zm-sec-add', 'title': 'Свои списки через другой VPN', 'click': function() { open('new'); } }, [ E('span', { 'class': 'zm-sec-add-text' }, 'Создать новую секцию') ]));
 			secCard.appendChild(E('div', { 'class': 'zm-nodes' }, tiles));
-			if (list.length > 1 && !common) secCard.appendChild(E('p', { 'class': 'zm-hint' }, (mainName() === 'Основная' ? 'Основная секция' : 'Основная секция — «' + mainName() + '»') + ': через неё идут DNS и скачивание списков. Правила секции действуют только для её устройств; если устройства не выбраны — для всех. Запрос подходит сразу нескольким секциям — сработает та, что левее. Один сервис можно включить в разных секциях, если у них разные устройства. Исключения общие для всех секций.'));
+			if (list.length > 1 && !common) secCard.appendChild(E('p', { 'class': 'zm-hint' }, (mainName() === 'Основная' ? 'Основная секция' : 'Основная секция — «' + mainName() + '»') + ': через неё идут DNS и скачивание списков. Правила секции действуют только для её устройств; если устройства не выбраны — для всех. Запрос подходит сразу нескольким секциям — сработает та, что левее (порядок меняйте стрелками ← → на карточке). Один сервис можно включить в разных секциях, если у них разные устройства. Исключения общие для всех секций.'));
 		}
 
 		function tabTo(id) {
