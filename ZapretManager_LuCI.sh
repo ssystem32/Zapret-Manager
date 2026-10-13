@@ -18660,6 +18660,35 @@ function cmd_get(want) {
 	});
 }
 
+/* Порядок connection-секций из панели (применяется в cmd_set вместе с «Сохранить»). */
+function apply_sec_order(c, order) {
+	let names = [];
+	for (let x in sections(c, "section"))
+		if (is_conn(x)) push(names, x[".name"]);
+	if (length(names) < 2) return;
+	let want = [];
+	if (type(order) == "array")
+		for (let n in order) {
+			n = s(n);
+			if (index(names, n) >= 0 && index(want, n) < 0) push(want, n);
+		}
+	for (let n in names)
+		if (index(want, n) < 0) push(want, n);
+	let guard = 0;
+	while (guard++ < 64) {
+		let cur = [];
+		for (let x in sections(c, "section"))
+			if (is_conn(x)) push(cur, x[".name"]);
+		let same = true, i;
+		for (i = 0; i < length(want); i++)
+			if (cur[i] != want[i]) { same = false; break; }
+		if (same) break;
+		let tidx = int((c.get_all(CFG, cur[i]) || {})[".index"]);
+		c.reorder(CFG, want[i], tidx);
+	}
+	if (c.get(CFG, BYPASS) != null) c.reorder(CFG, BYPASS, 1);
+}
+
 function cmd_set() {
 	let raw = fs.stdin.read("all"), d;
 	try { d = json(s(raw)); } catch (e) { fail("не удалось прочитать настройки"); }
@@ -18877,6 +18906,7 @@ function cmd_set() {
 	}
 	if (index(LIST_IVS, s(d.list_interval)) >= 0) c.set(CFG, "settings", "update_interval", s(d.list_interval));
 	write_set_ext(c, d.g);
+	apply_sec_order(c, d.sec_order);
 
 	c.save(CFG);
 	c.commit(CFG);
@@ -19707,9 +19737,10 @@ function cmd_secmove(sec, dir) {
 	if (dir != "left" && dir != "right") fail("направление: left или right");
 	let j = dir == "left" ? i - 1 : i + 1;
 	if (j < 0 || j >= length(names)) fail(dir == "left" ? "секция уже первая" : "секция уже последняя");
-	let tidx = int((c.get_all(CFG, names[j]) || {})[".index"]);
-	c.reorder(CFG, sec, tidx);
-	if (c.get(CFG, BYPASS) != null) c.reorder(CFG, BYPASS, 1);
+	let want = [];
+	for (let k = 0; k < length(names); k++) push(want, names[k]);
+	let t = want[i]; want[i] = want[j]; want[j] = t;
+	apply_sec_order(c, want);
 	c.save(CFG);
 	c.commit(CFG);
 	out({ ok: true });
@@ -31082,6 +31113,7 @@ function fromCfg(c) {
 		sub_interval: c.sub_interval || '12h', iface: c.iface || '', fastest: true, exclude: c.exclude || '',
 		items: pick.items, sel: pick.sel, own_on: c.own_on !== false && ((c.domains || []).length + (c.subnets || []).length + pick.lists.length) > 0, domains: (c.domains || []).join('\n'), subnets: (c.subnets || []).join('\n'),
 		lists: pick.lists.join('\n'), full: (c.full || []).slice(), all: (c.all || []).slice(), excl: (c.excl || []).slice(),
+		secOrder: ((c.sections || []).map(function(s) { return s.name; })),
 		dns: { type: dns.type || (dns.server ? 'udp' : 'dot'), servers: (dns.servers && dns.servers.length ? dns.servers : [ dns.server || '9.9.9.9' ]).slice(),
 			bootstraps: (dns.bootstraps && dns.bootstraps.length ? dns.bootstraps : [ dns.bootstrap || '9.9.9.9' ]).slice(), detour: !!dns.detour },
 		quic_off: c.quic_off !== false, list_interval: c.list_interval || '1d', lists_via: !!c.lists_via
@@ -31106,10 +31138,10 @@ function sig(d) {
 	var tl = function(v) { return String(v || '').split(/\n/).map(function(x) { return x.trim(); }).filter(Boolean).join('\n'); };
 	return JSON.stringify([ extSig(d, SEC_EXT), extSig(d, SET_EXT), d.sec, d.mode, tl(d.links), tl(d.sub), d.sub_interval, d.iface, d.fastest, (function(r) { return [ srt(r.c), srt(r.s), srt(r.r), srt(r.l) ]; })(refsOf(d)), tl(d.domains), d.own_on !== false,
 		tl(d.subnets), tl(d.lists), srt(d.full), srt(d.all || []), srt(d.excl), d.mode === 'iface' ? '' : String(d.exclude || ''), d.dns.type, d.dns.servers, d.dns.bootstraps, d.dns.detour, d.quic_off, d.list_interval, d.lists_via,
-		String(d.label || '').trim(), d.isMain || d.enabled, tl(d.byDomains), tl(d.bySubnets) ]);
+		String(d.label || '').trim(), d.isMain || d.enabled, tl(d.byDomains), tl(d.bySubnets), (d.secOrder || []).join(',') ]);
 }
 
-var GLOBAL_KEYS = [ 'byDomains', 'bySubnets', 'excl', 'dns', 'quic_off', 'list_interval', 'lists_via' ].concat(Object.keys(SET_EXT));
+var GLOBAL_KEYS = [ 'byDomains', 'bySubnets', 'excl', 'dns', 'quic_off', 'list_interval', 'lists_via', 'secOrder' ].concat(Object.keys(SET_EXT));
 
 function secSig(d) {
 	var x = {}, k;
@@ -31287,7 +31319,16 @@ return view.extend({
 
 		function secLive() { return secExists() && cfg.enabled !== false && cfg.mode !== 'iface'; }
 
-		function secs() { return (cfg && cfg.sections) || []; }
+		function secs() {
+			var list = (cfg && cfg.sections) || [];
+			var order = draft.secOrder;
+			if (!order || !order.length) return list;
+			var by = {}, out = [];
+			list.forEach(function(s) { by[s.name] = s; });
+			order.forEach(function(n) { if (by[n]) { out.push(by[n]); delete by[n]; } });
+			list.forEach(function(s) { if (by[s.name]) out.push(s); });
+			return out;
+		}
 
 		function secName() { return String(draft.label || '').trim() || (draft.isMain ? 'Основная' : 'новая секция'); }
 
@@ -31396,7 +31437,8 @@ return view.extend({
 				iface: draft.iface, fastest: true, refs: refsOf(draft), own_on: draft.own_on !== false, domains: draft.domains,
 				exclude: draft.mode === 'iface' ? '' : draft.exclude,
 				subnets: draft.subnets, lists: draft.lists, full: draft.full, all: draft.all, excl: draft.excl,
-				dns: { type: draft.dns.type, servers: draft.dns.servers, bootstraps: draft.dns.bootstraps, server: draft.dns.servers[0], bootstrap: draft.dns.bootstraps[0], detour: draft.dns.detour }, quic_off: draft.quic_off, list_interval: draft.list_interval, lists_via: draft.lists_via
+				dns: { type: draft.dns.type, servers: draft.dns.servers, bootstraps: draft.dns.bootstraps, server: draft.dns.servers[0], bootstrap: draft.dns.bootstraps[0], detour: draft.dns.detour }, quic_off: draft.quic_off, list_interval: draft.list_interval, lists_via: draft.lists_via,
+				sec_order: (draft.secOrder && draft.secOrder.length ? draft.secOrder : secs().map(function(s) { return s.name; }))
 			});
 		}
 
@@ -31553,27 +31595,16 @@ return view.extend({
 
 		function moveSec(name, dir) {
 			if (busy || saving || secBusy) { zm.toast('Дождитесь окончания текущей операции', 'warning'); return; }
-			var secDirty = draft.sec === 'new' ? false : secSig(draft) !== secSig(withBootMode(fromCfg(cfg)));
-			var stay = draft.sec === 'new' ? (cfg && cfg.main) || name : draft.sec;
-			var go = function() {
-				secBusy = true;
-				renderSections();
-				zm.forkopAction('secmove', name + '|' + dir).then(function(res) {
-					secBusy = false;
-					if (res.error) { zm.toast(res.error, 'error'); renderSections(); return; }
-					if (res.started) {
-						lastAct = 'restart';
-						zm.toast('Порядок секций изменён — перезапускаем Forkozz', 'warning');
-						switchSec(stay, true);
-						follow();
-					} else {
-						zm.toast('Порядок секций изменён', 'info');
-						switchSec(stay, true);
-					}
-				}).catch(function() { secBusy = false; renderSections(); zm.toast('Роутер не ответил', 'error'); });
-			};
-			if (secDirty) return zm.ask('В секции «' + secName() + '» есть несохранённые изменения.\n\nОтменить их и изменить порядок секций?').then(function(ok) { if (ok) go(); });
-			go();
+			var list = secs(), i = -1;
+			list.forEach(function(s, idx) { if (s.name === name) i = idx; });
+			if (i < 0) return;
+			var j = dir === 'left' ? i - 1 : i + 1;
+			if (j < 0 || j >= list.length) return;
+			var order = list.map(function(s) { return s.name; });
+			var t = order[i]; order[i] = order[j]; order[j] = t;
+			draft.secOrder = order;
+			touch();
+			renderSections();
 		}
 
 		function renderSections() {
@@ -31620,7 +31651,7 @@ return view.extend({
 			if (isNew) tiles.push(node(secName(), 'ещё не сохранена', true, function() {}, E('span', { 'class': 'zm-lat zm-lat-mid' }, 'черновик'), 'zm-sec'));
 			else if (list.length < SEC_MAX) tiles.push(E('div', { 'class': 'zm-node zm-sec zm-sec-add', 'title': 'Свои списки через другой VPN', 'click': function() { open('new'); } }, [ E('span', { 'class': 'zm-sec-add-text' }, 'Создать новую секцию') ]));
 			secCard.appendChild(E('div', { 'class': 'zm-nodes' }, tiles));
-			if (list.length > 1 && !common) secCard.appendChild(E('p', { 'class': 'zm-hint' }, (mainName() === 'Основная' ? 'Основная секция' : 'Основная секция — «' + mainName() + '»') + ': через неё идут DNS и скачивание списков. Правила секции действуют только для её устройств; если устройства не выбраны — для всех. Запрос подходит сразу нескольким секциям — сработает та, что левее (порядок меняйте стрелками ← → на карточке). Один сервис можно включить в разных секциях, если у них разные устройства. Исключения общие для всех секций.'));
+			if (list.length > 1 && !common) secCard.appendChild(E('p', { 'class': 'zm-hint' }, (mainName() === 'Основная' ? 'Основная секция' : 'Основная секция — «' + mainName() + '»') + ': через неё идут DNS и скачивание списков. Правила секции действуют только для её устройств; если устройства не выбраны — для всех. Запрос подходит сразу нескольким секциям — сработает та, что левее (порядок меняйте стрелками ← → на карточке, применится по «Сохранить»). Один сервис можно включить в разных секциях, если у них разные устройства. Исключения общие для всех секций.'));
 		}
 
 		function tabTo(id) {
