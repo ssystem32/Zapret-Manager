@@ -22754,7 +22754,6 @@ return view.extend({
 			E('h2', {}, 'Zapret Manager для LuCI и Web'),
 			E('span', { 'class': 'zm-header-by' }, 'by StressOzz · v' + (zmUpdate.current || '?')),
 			E('div', { 'class': 'zm-header-links' }, [
-				E('a', { 'href': 'http://stresskvn.lol/', 'target': '_blank', 'rel': 'noreferrer' }, 'StressKVN — обход белых списков!'),
 				E('a', { 'href': 'https://t.me/stressozz_manager', 'target': '_blank', 'rel': 'noreferrer' }, 'Сообщество Telegram'),
 				E('a', { 'href': 'http://' + window.location.hostname + ':7788/', 'target': '_blank', 'rel': 'noreferrer', 'class': 'zm-webui-link' }, 'Web UI ↗')
 			])
@@ -35742,9 +35741,6 @@ function buildShell() {
 		E('button', { 'class': 'zmw-icon-btn zmw-burger', 'type': 'button', 'aria-label': 'Меню', 'click': openDrawer }, [ icon('menu') ]),
 		E('div', { 'class': 'zmw-titles' }, [ titleEl, subEl ]),
 		E('div', { 'class': 'zmw-top-actions' }, [
-			E('a', { 'class': 'zmw-icon-btn zmw-link-btn zmw-link-kvn', 'href': 'http://stresskvn.lol/', 'target': '_blank', 'rel': 'noreferrer', 'title': 'StressKVN — умный VPN для стабильного доступа в любых условиях.' }, [
-				icon('rocket'), E('span', { 'class': 'zmw-lbl-full' }, [ E('span', { 'class': 'zmw-kvn-l1' }, [ 'StressKVN — лучший VPN' ]), E('span', { 'class': 'zmw-kvn-l2' }, [ 'обход белых списков · телефон, ПК, роутер' ]) ]), E('span', { 'class': 'zmw-lbl-short' }, [ 'StressKVN' ])
-			]),
 			E('a', { 'class': 'zmw-icon-btn zmw-link-btn zmw-link-tg', 'href': 'https://t.me/stressozz_manager', 'target': '_blank', 'rel': 'noreferrer', 'title': 'Сообщество Telegram' }, [
 				icon('telegram'), E('span', { 'class': 'zmw-lbl-full' }, [ 'Сообщество Telegram' ]), E('span', { 'class': 'zmw-lbl-short' }, [ 'Telegram' ])
 			]),
