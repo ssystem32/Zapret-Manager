@@ -32057,7 +32057,19 @@ return view.extend({
 			btns.push(E('button', { 'class': 'cbi-button cbi-button-positive', 'disabled': saving || busy ? '' : null, 'click': function() { save(true); } },
 				saving ? 'Сохраняем…' : st.enabled ? 'Сохранить и применить' : 'Сохранить и включить'));
 			saveBar.appendChild(E('span', { 'class': 'zm-savebar-dot' }));
-			saveBar.appendChild(E('span', { 'class': 'zm-savebar-text' }, busy ? 'Дождитесь окончания операции' : isNew ? 'Новая секция «' + secName() + '»: выберите подключение и сервисы или свои адреса, затем сохраните' : dirty ? 'Есть несохранённые изменения' + (secs().length > 1 && secSig(draft) !== secSig(withBootMode(fromCfg(cfg))) ? ' в секции «' + secName() + '»' : '') : 'Настройте подключение и сервисы или свои адреса, затем сохраните'));
+			var saveText = 'Настройте подключение и сервисы или свои адреса, затем сохраните';
+			if (busy) saveText = 'Дождитесь окончания операции';
+			else if (isNew) saveText = 'Новая секция «' + secName() + '»: выберите подключение и сервисы или свои адреса, затем сохраните';
+			else if (dirty) {
+				var baseCfg = withBootMode(fromCfg(cfg));
+				var orderDirty = (draft.secOrder || []).join(',') !== (baseCfg.secOrder || []).join(',');
+				var oneSecDirty = secs().length > 1 && secSig(draft) !== secSig(baseCfg);
+				if (orderDirty && oneSecDirty) saveText = 'Есть несохранённые изменения в секции «' + secName() + '» и в порядке расположения секций';
+				else if (orderDirty) saveText = 'Есть несохранённые изменения в порядке расположения секций';
+				else if (oneSecDirty) saveText = 'Есть несохранённые изменения в секции «' + secName() + '»';
+				else saveText = 'Есть несохранённые изменения';
+			}
+			saveBar.appendChild(E('span', { 'class': 'zm-savebar-text' }, saveText));
 			saveBar.appendChild(E('div', { 'class': 'zm-savebar-btns' }, btns));
 		}
 
